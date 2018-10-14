@@ -1,0 +1,21 @@
+{
+	"compileOnSave": true,
+	"compilerOptions": {
+		"declaration": true,
+		"lib": [ "dom", "es5" ],
+		"module": "commonjs",
+		"moduleResolution": "node",
+		"noImplicitAny": true,
+		"noImplicitThis": true,
+		"outDir": "../dist",
+		"removeComments": false,
+		"sourceMap": false,
+		"strictFunctionTypes": true,
+		"strictNullChecks": true,
+		"target": "es5",
+		"types": []
+	},
+	"files": [
+		"index.ts"
+	]
+}

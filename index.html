@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head>
+
+<title>Mandelbrot deep zoom</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+<style type="text/css">
+
+html, body {
+	margin: 0;
+	padding: 0;
+	overflow: hidden;
+}
+
+</style>
+
+<script src="https://unpkg.com/charto-loader@1/loader.min.js"></script>
+<script>
+
+charto.initSystemTS(function() {
+	System.import('src/index.ts').then(function() {
+		console.log(JSON.stringify(charto.systemConfig, null, '\t'));
+	});
+});
+
+</script>
+</head><body>
+
+<canvas id="gc" width="256" height="256" style="position: absolute; width: 100%; height: 100%;"></canvas>
+
+</body></html>
