@@ -1,0 +1,90 @@
+<!doctype html>
+<html><head>
+
+<title>Mandelbrot deep zoom</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+<style type="text/css">
+
+html, body {
+	margin: 0;
+	padding: 0;
+	overflow: hidden;
+}
+
+.centered {
+	position: fixed;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	text-align: center;
+}
+
+.button {
+	border: 4px solid #fff0c0;
+	border-radius: 48px;
+	padding: 32px;
+
+	font: bold 48px sans-serif;
+	color: #fff0c0;
+
+	cursor: pointer;
+
+	background: linear-gradient(#202020, #808080);
+	text-shadow: 0px 4px 2px #000000;
+	box-shadow:
+		0 0 64px 16px #000000,
+		inset 0 8px 8px #808080,
+		inset 0 -8px 8px #202020;
+}
+
+.help {
+	transform: translate(-50%);
+	font: 24pt sans-serif;
+	color: #000000;
+
+	text-shadow:
+		 0px -2px 4px #fff0c0,
+		-2px  0px 4px #fff0c0,
+		 2px  0px 4px #fff0c0,
+		 0px  2px 4px #fff0c0;
+}
+
+.inactive {
+	cursor: default;
+	pointer-events: none;
+}
+
+.preview {
+	width: 75%;
+	height: 75%;
+
+	background-color: #ffffff;
+
+	box-shadow:
+		0 0 64px 32px rgba(0, 0, 0, 0.75);
+}
+
+</style>
+
+<script src="https://unpkg.com/requirex@0.3.1"></script>
+<script type="x-req-dev-application/javascript" src="src/index.ts"></script>
+<script type="x-req-prod-application/javascript" src="bundle.js"></script>
+
+</head><body>
+
+<div id="content">
+	<canvas id="bg1" width="256" height="256" style="position: absolute; width: 100%; height: 100%;"></canvas>
+	<canvas id="bg2" width="256" height="256" style="position: absolute; width: 100%; height: 100%;"></canvas>
+	<canvas id="gc" width="256" height="256" style="position: absolute; width: 100%; height: 100%;"></canvas>
+	<canvas id="gc2" width="256" height="256" class="inactive" style="position: absolute; width: 100%; height: 100%;"></canvas>
+	<div id="thumbs" style="position: fixed; width: 100%; height: 80px; bottom: 0px; background-color: #000000; opacity: 0.25;"></div>
+</div>
+
+<div id="fullscreen" class="centered button">&#x21f1;&nbsp;Go&nbsp;full screen</div>
+<div id="help" class="centered help inactive" style="margin-top: 96px;">Touch fractal to zoom.</div>
+<div class="centered preview" style="display: none;"></div>
+
+<a href="https://github.com/charto/fracts"><img id="github" style="position: absolute; top: 0; left: 0; border: 0;" src="https://s3.amazonaws.com/github/ribbons/forkme_left_red_aa0000.png" alt="Fork me on GitHub"></a>
+
+</body></html>

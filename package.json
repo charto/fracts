@@ -1,0 +1,32 @@
+{
+  "private": true,
+  "name": "fracts",
+  "version": "0.1.0",
+  "description": "Mandelbrot with WebGL, RequireX and TypeScript",
+  "browser": "dist/index.js",
+  "scripts": {
+    "tsc": "tsc",
+    "prepare": "tsc -p src",
+    "start": "./serve.bat || serve.bat"
+  },
+  "author": "Juha Järvi",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/charto/fracts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/charto/fracts/issues"
+  },
+  "homepage": "https://github.com/charto/fracts#readme",
+  "dependencies": {
+    "bigfloat": "^0.1.1",
+    "classy-mst": "^3.14.0",
+    "mobx": "^4.15.4",
+    "mobx-state-tree": "^3.16.0",
+    "requirex": "^0.3.1"
+  },
+  "devDependencies": {
+    "typescript": "^3.9.2"
+  }
+}
