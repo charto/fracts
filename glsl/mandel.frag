@@ -15,6 +15,7 @@ const float dekkerSplitter = 8193.0;
 const float gridWidth = 0.125;
 const float gridAlpha = 1.0 / 16.0;
 const int maxIter = 1024;
+const int perturbStride = 256;
 
 const float bailOut = 256.0;
 const float bailOut2 = bailOut * bailOut;
@@ -28,7 +29,8 @@ const float limit2 = pow(2.0, 47.0);
 
 const vec4 scale1 = vec4( 1.0, 1.0,  2.0, 2.0);
 const vec4 scale2 = vec4(-1.0, 1.0, -2.0, 2.0);
-const vec4 zero = vec4(0.0);
+const vec2 zero2 = vec2(0.0);
+const vec4 zero4 = vec4(0.0);
 
 // Fast branchless color space conversion from HSL to RGB.
 
@@ -48,7 +50,7 @@ vec3 hsl2rgb(float h, float s, float l) {
 // by using a "nonlinear" step.
 
 vec4 times(vec4 a, vec4 b) {
-	return(mix(zero, a * b, step(0.0, abs(b))));
+	return(mix(zero4, a * b, step(0.0, abs(b))));
 }
 
 vec4 plus(vec4 a, vec4 b) {
@@ -75,8 +77,8 @@ mat4 twoSum(vec4 a, vec4 b) {
 	return(mat4(
 		estimate,
 		minus(a, a2) + minus(b, b2),
-		zero,
-		zero
+		zero4,
+		zero4
 	));
 }
 
@@ -90,8 +92,8 @@ mat4 fast2Sum(vec4 a, vec4 b) {
 	return(mat4(
 		estimate,
 		minus(a, estimate) + b,
-		zero,
-		zero
+		zero4,
+		zero4
 	));
 }
 
@@ -113,8 +115,8 @@ mat4 twoProd(vec4 a, float b) {
 	return(mat4(
 		estimate,
 		aLo * bLo - (estimate - aHi * bHi - aLo * bHi - aHi * bLo),
-		zero,
-		zero
+		zero4,
+		zero4
 	));
 }
 
@@ -123,7 +125,7 @@ mat4 twoProd(vec4 a, float b) {
 // with the product vector, and a vector of rounding errors.
 
 mat4 mul(vec4 aHi, vec4 aLo, float bHi, float bLo, vec4 scale) {
-	// return(mat4(aHi * bHi * scale, zero, zero, zero));
+	// return(mat4(aHi * bHi * scale, zero4, zero4, zero4));
 
 	mat4 prod = twoProd(aHi, bHi);
 
@@ -148,14 +150,14 @@ mat4 add(mat4 a, mat4 b) {
 }
 
 void main() {
-	mat4 z = mat4(zero, zero, zero, zero);
+	mat4 z = mat4(zero4, zero4, zero4, zero4);
 	int iter = 0;
 
 	if(uSize < limit1) {
 		// At shallowest zoom depths,
 		// use highp floats (should be IEEE 754 single precision).
 
-		vec4 a = zero, b = zero;
+		vec4 a = zero4, b = zero4;
 		vec4 init = vec4(uCenterHi + vPos * uZoom * uScale, 1.0, 0.0);
 
 		for(int i = maxIter; i > 0; --i) {
@@ -168,7 +170,7 @@ void main() {
 				break;
 			}
 		}
-	} else if(uSize < limit2) {
+	} else if(uSize < -limit2) {
 		// At shallow zooms past IEEE 754 single precision,
 		// use pairs of highp floats and error free transformations.
 
@@ -176,14 +178,14 @@ void main() {
 		mat4 init = add(
 			mat4(
 				uCenterHi, 1.0, 0.0,
-				uCenterLo, 0.0, 0.0,
-				zero,
-				zero
+				uCenterLo, zero2,
+				zero4,
+				zero4
 			), mat4(
-				vPos * uZoom * uScale, 0.0, 0.0,
-				zero,
-				zero,
-				zero
+				vPos * uZoom * uScale, zero2,
+				zero4,
+				zero4,
+				zero4
 			)
 		);
 
@@ -198,12 +200,30 @@ void main() {
 			}
 		}
 	} else {
-		// TODO: Use permutation for deeper zooms.
+		// Use perturbation for deeper zooms.
 
-		for(int i = maxIter; i > 0; --i) {
-			int y = i / 16;
-			vec4 exact = texture2D(uExact, vec2(i - y * 16, y) / 16.0);
+		vec4 init = vec4(vPos * uZoom * uScale, 0.0, 0.0);
+		vec4 exact;
+		z[0] = init;
+
+		for(int i = 0; i < maxIter; ++i) {
+			int y = i / perturbStride;
+			exact = texture2D(uExact, (vec2(i - y * perturbStride, y) + 0.5) / float(perturbStride));
+
+			vec4 d = z[0] + exact * vec4(2.0, 2.0, 1.0, 1.0);
+
+			z[0] = z[0].x * d * scale1 + z[0].y * d.yxwz * scale2 + init + vec4(zero2,
+				z[0].zw * exact.x * scale1.zw + z[0].wz * exact.y * scale2.zw
+			);
+
+			if(dot((z[0] + exact).xy, (z[0] + exact).xy) > bailOut2) {
+				iter = maxIter - i;
+				break;
+			}
 		}
+
+		// TODO: Is this an improvement for the distance estimation?
+		z[0] += exact;
 	}
 
 	vec2 abs2 = z[0].xz * z[0].xz + z[0].yw * z[0].yw;
@@ -226,6 +246,9 @@ void main() {
 			0.5 - phaseEdge * fraction
 		)
 	);
+
+// Distance estimation fails for deeper zooms...
+if(uSize > limit2) dist = 1.0;
 
 	gl_FragColor = vec4(hsl2rgb(
 		dwell / 64.0, // Hue

@@ -8,9 +8,10 @@ import mandelFragment from '../glsl/mandel.frag';
 
 const BigFloat32 = BigFloat;
 
-const maxIter = 256;
+const maxIter = 1024;
 const bailOut = 256;
 const bailOut2 = new BigFloat32(bailOut * bailOut);
+const perturbStride = 256;
 
 const enum Attribute {
 	aPos = 0
@@ -25,31 +26,39 @@ function die(msg: string): never {
 interface State {
 	real: BigFloat32;
 	imag: BigFloat32;
+	dreal: BigFloat32;
+	dimag: BigFloat32;
 	reals: number[];
 	imags: number[];
+	dreals: number[];
+	dimags: number[];
 	iter?: number;
 }
 
 function deep(state: State, maxIter: number, bailOut2: BigFloat32) {
-	let { real, imag, reals, imags } = state;
+	let { real, imag, dreal, dimag, reals, imags, dreals, dimags } = state;
 	let real2 = real.mul(real).truncate(2);
 	let imag2 = imag.mul(imag).truncate(2);
-	let dReal = new BigFloat32(1);
-	let dImag = new BigFloat32(0);
-	let dNext;
+	let dnext;
 
 	let iter = maxIter;
+	reals.push(real.valueOf());
+	imags.push(imag.valueOf());
+	dreals.push(dreal.valueOf());
+	dimags.push(dimag.valueOf());
 
-	while(--iter && real2.add(imag2).deltaFrom(bailOut2) < 0) {
-		// dNext = 2 * (real * dReal - imag * dImag) + 1;
-		// dImag = 2 * (real * dImag + imag * dReal);
-		// dReal = dNext;
+	while(iter-- && real2.add(imag2).deltaFrom(bailOut2) < 0) {
+		dnext = real.mul(dreal).truncate(2).sub(imag.mul(dimag).truncate(2)).mul(2).add(1);
+		dimag = real.mul(dimag).truncate(2).add(imag.mul(dreal).truncate(2)).mul(2);
+		dreal = dnext;
 
 		imag = real.mul(imag).truncate(2).mul(2).add(state.imag);
 		real = real2.sub(imag2).add(state.real);
 
 		reals.push(real.valueOf());
 		imags.push(imag.valueOf());
+		dreals.push(dreal.valueOf());
+		dimags.push(dimag.valueOf());
 
 		real2 = real.mul(real).truncate(2);
 		imag2 = imag.mul(imag).truncate(2);
@@ -57,6 +66,8 @@ function deep(state: State, maxIter: number, bailOut2: BigFloat32) {
 
 	state.real = real;
 	state.imag = imag;
+	state.dreal = dreal;
+	state.dimag = dimag;
 	state.iter = maxIter - iter;
 }
 
@@ -136,28 +147,31 @@ class Render {
 		const xScale = width / size * 2;
 		const yScale = height / size * 2;
 
-		const w = 16, h = 16;
 		const state: State = {
 			real: new BigFloat32(x),
 			imag: new BigFloat32(y),
+			dreal: new BigFloat32(1),
+			dimag: new BigFloat32(0),
 			reals: [],
-			imags: []
+			imags: [],
+			dreals: [],
+			dimags: []
 		};
 
 		deep(state, maxIter, bailOut2);
-		const data = new Float32Array(w * h * 4);
+		const data = new Float32Array(perturbStride * perturbStride * 4);
 
 		let ptr = 0;
 		let num = -1;
 
-		while(++num < w * h) {
+		while(++num < perturbStride * perturbStride) {
 			data[ptr++] = state.reals[num];
 			data[ptr++] = state.imags[num];
-			data[ptr++] = 0;
-			data[ptr++] = 0;
+			data[ptr++] = state.dreals[num];
+			data[ptr++] = state.dimags[num];
 		}
 
-		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.FLOAT, data);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, perturbStride, perturbStride, 0, gl.RGBA, gl.FLOAT, data);
 
 		f32[0] = x;
 		const xHi = f32[0];
