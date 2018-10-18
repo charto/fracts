@@ -1,12 +1,14 @@
 /// <reference path="glsl.d.ts" />
 
 import { Shader } from 'charto-3d';
-import { BigFloat } from 'bigfloat';
+import { BigFloat32 } from 'bigfloat';
+import { MandelbrotView, OrbitSample } from './MandelbrotView';
 
 import mandelVertex from '../glsl/mandel.vert';
 import mandelFragment from '../glsl/mandel.frag';
 
-const BigFloat32 = BigFloat;
+// type BigFloat32 = BigFloat;
+// const BigFloat32 = BigFloat;
 
 const maxIter = 1024;
 const bailOut = 256;
@@ -21,54 +23,6 @@ const f32 = new Float32Array(1);
 
 function die(msg: string): never {
 	throw(new Error(msg));
-}
-
-interface State {
-	real: BigFloat32;
-	imag: BigFloat32;
-	dreal: BigFloat32;
-	dimag: BigFloat32;
-	reals: number[];
-	imags: number[];
-	dreals: number[];
-	dimags: number[];
-	iter?: number;
-}
-
-function deep(state: State, maxIter: number, bailOut2: BigFloat32) {
-	let { real, imag, dreal, dimag, reals, imags, dreals, dimags } = state;
-	let real2 = real.mul(real).truncate(2);
-	let imag2 = imag.mul(imag).truncate(2);
-	let dnext;
-
-	let iter = maxIter;
-	reals.push(real.valueOf());
-	imags.push(imag.valueOf());
-	dreals.push(dreal.valueOf());
-	dimags.push(dimag.valueOf());
-
-	while(iter-- && real2.add(imag2).deltaFrom(bailOut2) < 0) {
-		dnext = real.mul(dreal).truncate(2).sub(imag.mul(dimag).truncate(2)).mul(2).add(1);
-		dimag = real.mul(dimag).truncate(2).add(imag.mul(dreal).truncate(2)).mul(2);
-		dreal = dnext;
-
-		imag = real.mul(imag).truncate(2).mul(2).add(state.imag);
-		real = real2.sub(imag2).add(state.real);
-
-		reals.push(real.valueOf());
-		imags.push(imag.valueOf());
-		dreals.push(dreal.valueOf());
-		dimags.push(dimag.valueOf());
-
-		real2 = real.mul(real).truncate(2);
-		imag2 = imag.mul(imag).truncate(2);
-	}
-
-	state.real = real;
-	state.imag = imag;
-	state.dreal = dreal;
-	state.dimag = dimag;
-	state.iter = maxIter - iter;
 }
 
 class Render {
@@ -113,6 +67,15 @@ class Render {
 		[ this.uCenterHi, this.uCenterLo, this.uScale, this.uSize, this.uZoom ] = this.getUniformLocations([
 			'uCenterHi', 'uCenterLo', 'uScale', 'uSize', 'uZoom'
 		]);
+
+		if(0) {
+			const fb = gl.createFramebuffer();
+
+			if(gl.checkFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE) { /* ERROR */ }
+
+			gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+			gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, gl.createTexture(), 0);
+		}
 	}
 
 	getUniformLocations(nameList: string[]) {
@@ -125,8 +88,12 @@ class Render {
 		));
 	}
 
-	redraw(x: number, y: number, zoom: number) {
+	draw(view: MandelbrotView) {
 		const gl = this.gl;
+
+		let x = view.center.real.valueOf();
+		let y = view.center.imag.valueOf();
+		let zoom = Math.pow(2, view.zoomExponent);
 
 		// const ratio = window.devicePixelRatio;
 		const ratio = 1.0;
@@ -147,28 +114,20 @@ class Render {
 		const xScale = width / size * 2;
 		const yScale = height / size * 2;
 
-		const state: State = {
-			real: new BigFloat32(x),
-			imag: new BigFloat32(y),
-			dreal: new BigFloat32(1),
-			dimag: new BigFloat32(0),
-			reals: [],
-			imags: [],
-			dreals: [],
-			dimags: []
-		};
-
-		deep(state, maxIter, bailOut2);
+		view.updateOrbit();
 		const data = new Float32Array(perturbStride * perturbStride * 4);
 
 		let ptr = 0;
-		let num = -1;
+		let num = 0;
+		let sample: OrbitSample<number>;
 
-		while(++num < perturbStride * perturbStride) {
-			data[ptr++] = state.reals[num];
-			data[ptr++] = state.imags[num];
-			data[ptr++] = state.dreals[num];
-			data[ptr++] = state.dimags[num];
+		while(num < perturbStride * perturbStride) {
+			sample = view.orbitChunk[num++] || {};
+
+			data[ptr++] = sample.real;
+			data[ptr++] = sample.imag;
+			data[ptr++] = sample.dReal;
+			data[ptr++] = sample.dImag;
 		}
 
 		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, perturbStride, perturbStride, 0, gl.RGBA, gl.FLOAT, data);
@@ -209,17 +168,56 @@ const render = new Render(canvas);
 
 let x = 0;
 let y = 0;
-let zoom = 1;
+let zoom = 0;
 
 // const step = Math.pow(2, -1 / 2);
-const step = Math.pow(2, -2);
+const step = -1 / 16;
 
 function redraw() {
-	window.requestAnimationFrame(() => render.redraw(x, y, zoom));
+	window.requestAnimationFrame(() => render.draw(new MandelbrotView(x, y, zoom, { iterationsPerStep: 128 })));
 }
 
 window.onresize = redraw;
 
+let zooming = false;
+let mx = canvas.offsetWidth / 2;
+let my = canvas.offsetHeight / 2;
+
+canvas.onmousemove = (e: MouseEvent) => {
+	mx = e.offsetX;
+	my = e.offsetY;
+}
+
+canvas.onmousedown = (e: MouseEvent) => {
+	zooming = true;
+
+	mx = e.offsetX;
+	my = e.offsetY;
+
+	animate();
+}
+
+canvas.onmouseup = (e: MouseEvent) => {
+	zooming = false;
+}
+
+function animate() {
+	if(zooming) window.requestAnimationFrame(animate);
+
+	const width = canvas.offsetWidth;
+	const height = canvas.offsetHeight;
+	const size = Math.min(width, height);
+
+	x = x + (mx / width - 0.5) * width / size * 4 * Math.pow(2, zoom) * (1 - Math.pow(2, step));
+	y = y + (0.5 - my / height) * height / size * 4 * Math.pow(2, zoom) * (1 - Math.pow(2, step));
+	zoom += step;
+
+	redraw();
+}
+
+animate();
+
+/*
 canvas.onclick = (e: MouseEvent) => {
 	const width = canvas.offsetWidth;
 	const height = canvas.offsetHeight;
@@ -233,3 +231,4 @@ canvas.onclick = (e: MouseEvent) => {
 };
 
 redraw();
+*/

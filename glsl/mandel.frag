@@ -14,21 +14,26 @@ const float dekkerSplitter = 8193.0;
 
 const float gridWidth = 0.125;
 const float gridAlpha = 1.0 / 16.0;
-const int maxIter = 1024;
+const int maxIter = 64;
 const int perturbStride = 256;
 
 const float bailOut = 256.0;
 const float bailOut2 = bailOut * bailOut;
-const float bailOutLog = log(bailOut) * 2.0;
+const float logBailOut2 = log(bailOut) * 2.0;
 
-const float dwellEdge = pow(bailOut, 4.0 - gridWidth);
-const float phaseEdge = gridWidth / 64.0 * bailOutLog / log(2.0);
+const float dwellEdge = log(bailOut) * (4.0 - gridWidth);
+const float phaseEdge = gridWidth / 64.0 * logBailOut2 / log(2.0);
+
+// Scaling factor to avoid overflow of intermediate values in complex number magnitude calculations.
+const float magnitudeScale = pow(2.0, -62.0) / bailOut;
+const float logMagnitudeScale = log(4.0) * 62.0 + logBailOut2;
 
 const float limit1 = pow(2.0, 24.0);
 const float limit2 = pow(2.0, 47.0);
 
-const vec4 scale1 = vec4( 1.0, 1.0,  2.0, 2.0);
-const vec4 scale2 = vec4(-1.0, 1.0, -2.0, 2.0);
+const vec4 v1122 = vec4( 1.0, 1.0,  2.0, 2.0);
+const vec4 va1b2 = vec4(-1.0, 1.0, -2.0, 2.0);
+const vec4 v2211 = vec4( 2.0, 2.0,  1.0, 1.0);
 const vec2 zero2 = vec2(0.0);
 const vec4 zero4 = vec4(0.0);
 
@@ -149,97 +154,96 @@ mat4 add(mat4 a, mat4 b) {
 	return(fast2Sum(hl[0], hl[1] + ll[1]));
 }
 
+// At shallowest zoom depths,
+// use highp floats (should be IEEE 754 single precision).
+
+int mandelSingle(out vec4 z) {
+	vec4 a = zero4, b = zero4;
+	vec4 init = vec4(uCenterHi + vPos * uZoom * uScale, 1.0, 0.0);
+
+	for(int i = 0; i < maxIter; ++i) {
+		z = a + b + init;
+		a = z      * z.x * v1122;
+		b = z.yxwz * z.y * va1b2;
+
+		if(a.x - b.x > bailOut2) return(i);
+	}
+}
+
+// At shallow zooms past IEEE 754 single precision,
+// use pairs of highp floats and error free transformations.
+
+int mandelDouble(out mat4 z) {
+	mat4 a = mat4(zero4, zero4, zero4, zero4);
+	mat4 b = a;
+
+	a[0] = vec4(uCenterHi, 1.0, 0.0);
+	a[1].xy = uCenterLo;
+	b[0].xy = vPos * uZoom * uScale;
+
+	mat4 init = add(a, b);
+
+	a[0] = a[1] = b[0] = zero4;
+
+	for(int i = 0; i < maxIter; ++i) {
+		z = add(add(a, b), init);
+		a = mul(z[0],      z[1],      z[0].x, z[1].x, v1122);
+		b = mul(z[0].yxwz, z[1].yxwz, z[0].y, z[1].y, va1b2);
+
+		if(add(a, -b)[0].x > bailOut2) return(i);
+	}
+}
+
+// Use perturbation for deeper zooms.
+
+int mandelPerturb(out vec4 z) {
+	vec4 init = vec4(vPos * uZoom * uScale, zero2);
+	vec4 exact;
+	z = init;
+
+	for(int i = 0; i < maxIter; ++i) {
+		int y = i / perturbStride;
+		exact = texture2D(uExact, (vec2(i - y * perturbStride, y) + 0.5) / float(perturbStride));
+
+		vec4 total = z + exact * v2211;
+
+		z = (init +
+			z.x  * total   * v1122    + z.y  * total.yxwz * va1b2 + vec4(zero2,
+			z.zw * exact.x * v1122.zw + z.wz * exact.y    * va1b2.zw
+		));
+
+		if(dot((z + exact).xy, (z + exact).xy) > bailOut2) {
+			z += exact;
+			return(i);
+		}
+	}
+}
+
 void main() {
 	mat4 z = mat4(zero4, zero4, zero4, zero4);
 	int iter = 0;
 
 	if(uSize < limit1) {
-		// At shallowest zoom depths,
-		// use highp floats (should be IEEE 754 single precision).
-
-		vec4 a = zero4, b = zero4;
-		vec4 init = vec4(uCenterHi + vPos * uZoom * uScale, 1.0, 0.0);
-
-		for(int i = maxIter; i > 0; --i) {
-			z[0] = a + b + init;
-			a = z[0] * z[0].x * scale1;
-			b = z[0].yxwz * z[0].y * scale2;
-
-			if(a.x - b.x > bailOut2) {
-				iter = i;
-				break;
-			}
-		}
+		iter = mandelSingle(z[0]);
 	} else if(uSize < -limit2) {
-		// At shallow zooms past IEEE 754 single precision,
-		// use pairs of highp floats and error free transformations.
-
-		mat4 a = z, b = z;
-		mat4 init = add(
-			mat4(
-				uCenterHi, 1.0, 0.0,
-				uCenterLo, zero2,
-				zero4,
-				zero4
-			), mat4(
-				vPos * uZoom * uScale, zero2,
-				zero4,
-				zero4,
-				zero4
-			)
-		);
-
-		for(int i = maxIter; i > 0; --i) {
-			z = add(add(a, b), init);
-			a = mul(z[0], z[1], z[0].x, z[1].x, scale1);
-			b = mul(z[0].yxwz, z[1].yxwz, z[0].y, z[1].y, scale2);
-
-			if(add(a, -b)[0].x > bailOut2) {
-				iter = i;
-				break;
-			}
-		}
+		iter = mandelDouble(z);
 	} else {
-		// Use perturbation for deeper zooms.
-
-		vec4 init = vec4(vPos * uZoom * uScale, 0.0, 0.0);
-		vec4 exact;
-		z[0] = init;
-
-		for(int i = 0; i < maxIter; ++i) {
-			int y = i / perturbStride;
-			exact = texture2D(uExact, (vec2(i - y * perturbStride, y) + 0.5) / float(perturbStride));
-
-			vec4 d = z[0] + exact * vec4(2.0, 2.0, 1.0, 1.0);
-
-			z[0] = z[0].x * d * scale1 + z[0].y * d.yxwz * scale2 + init + vec4(zero2,
-				z[0].zw * exact.x * scale1.zw + z[0].wz * exact.y * scale2.zw
-			);
-
-			if(dot((z[0] + exact).xy, (z[0] + exact).xy) > bailOut2) {
-				iter = maxIter - i;
-				break;
-			}
-		}
-
-		// TODO: Is this an improvement for the distance estimation?
-		z[0] += exact;
+		iter = mandelPerturb(z[0]);
 	}
 
-	vec2 abs2 = z[0].xz * z[0].xz + z[0].yw * z[0].yw;
-	float absLog = log(abs2.x);
-	float dist = absLog * sqrt(abs2.x / abs2.y);
+	vec4 zs = z[0] * magnitudeScale;
+	vec2 logMagnitude = log(zs.xz * zs.xz + zs.yw * zs.yw) + logMagnitudeScale;
+
+	float dist = logMagnitude.x * exp((logMagnitude.x - logMagnitude.y) * 0.5);
 	float arg = atan(z[0].y, z[0].x) * INVPI;
-	float fraction = absLog / bailOutLog;
+	float fraction = logMagnitude.x / logBailOut2;
 
-	// For smooth escape coloring use:
-	// float dwell = float(maxIter - iter) + 2.0 - fraction;
-
-	float dwell = float(maxIter - iter);
+	float dwell = float(iter);
+	float smoothDwell = dwell + 2.0 - fraction;
 
 	float isEdge = 1.0 - (
 		step(
-			abs2.x,
+			logMagnitude.x,
 			dwellEdge
 		) * step(
 			abs(abs(arg) - 0.5),
@@ -247,15 +251,12 @@ void main() {
 		)
 	);
 
-// Distance estimation fails for deeper zooms...
-if(uSize > limit2) dist = 1.0;
-
 	gl_FragColor = vec4(hsl2rgb(
-		dwell / 64.0, // Hue
-		0.75,
+		log(smoothDwell) / 4.0, // Hue
+		0.5,
 		mix( // Lightness is...
-			// outside the set, distance estimate multiplied by...
-			min(dist * 256.0 / uZoom + 0.25, 1.0) * (
+			// outside the set, cube root of distance estimate multiplied by...
+			min(pow(dist / uZoom, 1.0 / 3.0) * 4.0, 1.0) * (
 				// Base lightness offset by...
 				0.5 +
 				// Binary decomposition grid lines and odd cell interiors.
@@ -263,7 +264,7 @@ if(uSize > limit2) dist = 1.0;
 			),
 			// Inside the set, use constant lightness.
 			1.0,
-			step(0.0, -float(iter))
+			step(float(maxIter), float(iter))
 		)
 	), 1.0);
 }
