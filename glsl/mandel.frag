@@ -157,17 +157,26 @@ mat4 add(mat4 a, mat4 b) {
 // At shallowest zoom depths,
 // use highp floats (should be IEEE 754 single precision).
 
-int mandelSingle(out vec4 z) {
+int mandelSingle(out vec4 z, out int period) {
 	vec4 a = zero4, b = zero4;
 	vec4 init = vec4(uCenterHi + vPos * uZoom * uScale, 1.0, 0.0);
+	float distMin = bailOut2;
+	float dist;
 
-	for(int i = 0; i < maxIter; ++i) {
+	for(int iter = 0; iter < maxIter; ++iter) {
 		z = a + b + init;
 		a = z      * z.x * v1122;
 		b = z.yxwz * z.y * va1b2;
 
-		if(a.x - b.x > bailOut2) return(i);
+		dist = a.x - b.x;
+
+		if(dist < distMin) {
+			period = iter;
+			distMin = dist;
+		} else if(dist > bailOut2) return(iter);
 	}
+
+	return(maxIter);
 }
 
 // At shallow zooms past IEEE 754 single precision,
@@ -192,19 +201,22 @@ int mandelDouble(out mat4 z) {
 
 		if(add(a, -b)[0].x > bailOut2) return(i);
 	}
+
+	return(maxIter);
 }
 
 // Use perturbation for deeper zooms.
 
-int mandelPerturb(out vec4 z) {
+int mandelPerturb(out vec4 z, out int period) {
 	vec4 init = vec4(vPos * uZoom * uScale, zero2);
 	vec4 exact;
+	float distMin = bailOut2;
+	float dist;
 	z = init;
 
-	for(int i = 0; i < maxIter; ++i) {
-		int y = i / perturbStride;
-		exact = texture2D(uExact, (vec2(i - y * perturbStride, y) + 0.5) / float(perturbStride));
+	exact = texture2D(uExact, (zero2 + 0.5) / float(perturbStride));
 
+	for(int iter = 1; iter < maxIter; ++iter) {
 		vec4 total = z + exact * v2211;
 
 		z = (init +
@@ -212,27 +224,38 @@ int mandelPerturb(out vec4 z) {
 			z.zw * exact.x * v1122.zw + z.wz * exact.y    * va1b2.zw
 		));
 
-		if(dot((z + exact).xy, (z + exact).xy) > bailOut2) {
+		int y = iter / perturbStride;
+		exact = texture2D(uExact, (vec2(iter - y * perturbStride, y) + 0.5) / float(perturbStride));
+
+		dist = dot(z.xy + exact.xy, z.xy + exact.xy);
+
+		if(dist < distMin) {
+			period = iter;
+			distMin = dist;
+		} else if(dist > bailOut2) {
 			z += exact;
-			return(i);
+			return(iter);
 		}
 	}
+
+	return(maxIter);
 }
 
 void main() {
 	mat4 z = mat4(zero4, zero4, zero4, zero4);
+	int period = 0;
 	int iter = 0;
 
 	if(uSize < limit1) {
-		iter = mandelSingle(z[0]);
+		iter = mandelSingle(z[0], period);
 	} else if(uSize < -limit2) {
 		iter = mandelDouble(z);
 	} else {
-		iter = mandelPerturb(z[0]);
+		iter = mandelPerturb(z[0], period);
 	}
 
 	vec4 zs = z[0] * magnitudeScale;
-	vec2 logMagnitude = log(zs.xz * zs.xz + zs.yw * zs.yw) + logMagnitudeScale;
+	vec2 logMagnitude = max(log(zs.xz * zs.xz + zs.yw * zs.yw) + logMagnitudeScale, 0.0);
 
 	float dist = logMagnitude.x * exp((logMagnitude.x - logMagnitude.y) * 0.5);
 	float arg = atan(z[0].y, z[0].x) * INVPI;
@@ -251,8 +274,14 @@ void main() {
 		)
 	);
 
+	float inside = step(float(maxIter), dwell);
+
 	gl_FragColor = vec4(hsl2rgb(
-		log(smoothDwell) / 4.0, // Hue
+		mix(
+			log(smoothDwell) / 4.0, // Hue
+			float(period) / 31.0,
+			1.0 // inside
+		),
 		0.5,
 		mix( // Lightness is...
 			// outside the set, cube root of distance estimate multiplied by...
@@ -263,8 +292,8 @@ void main() {
 				(step(z[0].y, 0.0) * (1.0 - isEdge) - isEdge) * gridAlpha
 			),
 			// Inside the set, use constant lightness.
-			1.0,
-			step(float(maxIter), float(iter))
+			0.75,
+			inside
 		)
 	), 1.0);
 }

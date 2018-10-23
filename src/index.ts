@@ -2,7 +2,8 @@
 
 import { Shader } from 'charto-3d';
 import { BigFloat32 } from 'bigfloat';
-import { MandelbrotView, OrbitSample } from './MandelbrotView';
+import { OrbitSample } from './util';
+import { MandelbrotView } from './MandelbrotView';
 
 import mandelVertex from '../glsl/mandel.vert';
 import mandelFragment from '../glsl/mandel.frag';
@@ -14,6 +15,8 @@ const maxIter = 1024;
 const bailOut = 256;
 const bailOut2 = new BigFloat32(bailOut * bailOut);
 const perturbStride = 256;
+
+const thumbSize = 0;
 
 const enum Attribute {
 	aPos = 0
@@ -98,7 +101,7 @@ class Render {
 		// const ratio = window.devicePixelRatio;
 		const ratio = 1.0;
 		const width = this.canvas.offsetWidth * ratio;
-		const height = this.canvas.offsetHeight * ratio;
+		const height = (this.canvas.offsetHeight - thumbSize) * ratio;
 
 		if(width != this.width || height != this.height) {
 			this.width = width;
@@ -106,6 +109,8 @@ class Render {
 
 			this.canvas.width = width;
 			this.canvas.height = height;
+(document.getElementById('gc2') as HTMLCanvasElement).width = width;
+(document.getElementById('gc2') as HTMLCanvasElement).height = height;
 
 			gl.viewport(0, 0, width, height);
 		}
@@ -145,6 +150,8 @@ class Render {
 		gl.uniform1f(this.uSize, size / zoom);
 		gl.uniform1f(this.uZoom, zoom);
 
+		// gl.uniform1i(this.uDebug, view.period);
+
 		gl.clear(gl.COLOR_BUFFER_BIT);
 		gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 	}
@@ -172,16 +179,23 @@ let zoom = 0;
 
 // const step = Math.pow(2, -1 / 2);
 const step = -1 / 16;
+let view = new MandelbrotView([x, y], zoom, { iterationsPerFrame: 64 * 4 });
 
 function redraw() {
-	window.requestAnimationFrame(() => render.draw(new MandelbrotView(x, y, zoom, { iterationsPerStep: 128 })));
+	window.requestAnimationFrame(() => render.draw(view));
 }
 
 window.onresize = redraw;
 
 let zooming = false;
 let mx = canvas.offsetWidth / 2;
-let my = canvas.offsetHeight / 2;
+let my = (canvas.offsetHeight - thumbSize) / 2;
+
+function hideHelp() {
+	document.getElementById('fullscreen')!.style.display = 'none';
+	document.getElementById('help')!.style.display = 'none';
+	document.getElementById('github')!.style.display = 'none';
+}
 
 canvas.onmousemove = (e: MouseEvent) => {
 	mx = e.offsetX;
@@ -190,6 +204,7 @@ canvas.onmousemove = (e: MouseEvent) => {
 
 canvas.onmousedown = (e: MouseEvent) => {
 	zooming = true;
+	hideHelp();
 
 	mx = e.offsetX;
 	my = e.offsetY;
@@ -205,17 +220,34 @@ function animate() {
 	if(zooming) window.requestAnimationFrame(animate);
 
 	const width = canvas.offsetWidth;
-	const height = canvas.offsetHeight;
+	const height = (canvas.offsetHeight - thumbSize);
 	const size = Math.min(width, height);
 
-	x = x + (mx / width - 0.5) * width / size * 4 * Math.pow(2, zoom) * (1 - Math.pow(2, step));
-	y = y + (0.5 - my / height) * height / size * 4 * Math.pow(2, zoom) * (1 - Math.pow(2, step));
-	zoom += step;
+	// x = x + (mx / width - 0.5) * width / size * 4 * Math.pow(2, zoom) * (1 - Math.pow(2, step));
+	// y = y + (0.5 - my / height) * height / size * 4 * Math.pow(2, zoom) * (1 - Math.pow(2, step));
+	// zoom += step;
+	view.setPixelSize(width, height);
+	view = view.zoomedTo(mx / width * 2 - 1, 1 - my / height * 2, step);
 
-	redraw();
+	render.draw(view);
 }
 
 animate();
+
+document.getElementById('fullscreen')!.onclick = (e: MouseEvent) => {
+	hideHelp();
+
+	try {
+		const element = document.documentElement!;
+
+		(
+			element.requestFullscreen ||
+			(element as any).webkitRequestFullscreen ||
+			(element as any).mozRequestFullScreen ||
+			(element as any).msRequestFullscreen
+		).call(element);
+	} catch(err) {}
+};
 
 /*
 canvas.onclick = (e: MouseEvent) => {
