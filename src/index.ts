@@ -1,21 +1,14 @@
 /// <reference path="glsl.d.ts" />
 
 import { Shader } from 'charto-3d';
-import { BigFloat32 } from 'bigfloat';
 import { OrbitSample } from './util';
 import { MandelbrotView } from './MandelbrotView';
 
 import mandelVertex from '../glsl/mandel.vert';
 import mandelFragment from '../glsl/mandel.frag';
+import { BigFloat32 as BigFloat, BigComplex32 as BigComplex } from 'bigfloat';
 
-// type BigFloat32 = BigFloat;
-// const BigFloat32 = BigFloat;
-
-const maxIter = 1024;
-const bailOut = 256;
-const bailOut2 = new BigFloat32(bailOut * bailOut);
 const perturbStride = 256;
-
 const thumbSize = 0;
 
 const enum Attribute {
@@ -67,8 +60,8 @@ class Render {
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-		[ this.uCenterHi, this.uCenterLo, this.uScale, this.uSize, this.uZoom ] = this.getUniformLocations([
-			'uCenterHi', 'uCenterLo', 'uScale', 'uSize', 'uZoom'
+		[ this.uCenterHi, this.uCenterLo, this.uScale, this.uSize, this.uZoom, this.uReferenceOffset ] = this.getUniformLocations([
+			'uCenterHi', 'uCenterLo', 'uScale', 'uSize', 'uZoom', 'uReferenceOffset'
 		]);
 
 		if(0) {
@@ -143,12 +136,16 @@ class Render {
 		f32[0] = y;
 		const yHi = f32[0];
 
+		const offset = view.getOffset(view.referencePoint.real, view.referencePoint.imag);
+
 		// gl.uniform1i(this.uMaxIter, maxIter);
 		gl.uniform2f(this.uCenterHi, xHi, yHi);
 		gl.uniform2f(this.uCenterLo, x - xHi, y - yHi);
 		gl.uniform2f(this.uScale, xScale, yScale);
 		gl.uniform1f(this.uSize, size / zoom);
 		gl.uniform1f(this.uZoom, zoom);
+		console.log(offset.x.valueOf(), offset.y.valueOf())
+		gl.uniform2f(this.uReferenceOffset, -offset.x, -offset.y);
 
 		// gl.uniform1i(this.uDebug, view.period);
 
@@ -164,6 +161,7 @@ class Render {
 	uScale: WebGLUniformLocation;
 	uSize: WebGLUniformLocation;
 	uZoom: WebGLUniformLocation;
+	uReferenceOffset: WebGLUniformLocation;
 
 	width: number;
 	height: number;
@@ -173,13 +171,18 @@ class Render {
 const canvas = document.getElementById('gc') as HTMLCanvasElement;
 const render = new Render(canvas);
 
-let x = 0;
-let y = 0;
+const real = new BigFloat();
+const imag = new BigFloat();
 let zoom = 0;
 
 // const step = Math.pow(2, -1 / 2);
 const step = -1 / 16;
-let view = new MandelbrotView([x, y], zoom, { iterationsPerFrame: 64 * 4 });
+
+let view = new MandelbrotView(new BigComplex(real, imag), zoom, {
+	iterationsPerFrame: 64 * 8,
+	bailOut: 256,
+	maxPeriod: 512
+});
 
 function redraw() {
 	window.requestAnimationFrame(() => render.draw(view));

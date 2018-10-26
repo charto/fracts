@@ -4,7 +4,7 @@ import {
 } from 'bigfloat';
 
 import { MandelbrotOptions, OrbitSample, tempFloats } from './util';
-import { mandelbrotPeriod } from './mandelbrotPeriod';
+import { PeriodFinder } from './PeriodFinder';
 
 function iterateMandelbrot(
 	param: BigComplex,
@@ -41,15 +41,17 @@ function iterateMandelbrot(
 		sample.dImag = dImag.valueOf();
 
 		// dz = 2 * z * dz + 1
+		// This grows larger at deeper zooms, so we always round
+		// to only one fractional limb.
 		real.mul(dReal, temp1).sub(
 			imag.mul(dImag, temp2),
 			temp3
-		).truncate(limbCount).mul(two, dNext);
+		).truncate(1).mul(two, dNext);
 
 		real.mul(dImag, temp1).add(
 			imag.mul(dReal, temp2),
 			temp3
-		).truncate(limbCount).mul(two, dImag);
+		).truncate(1).mul(two, dImag);
 
 		dNext.add(one, dReal);
 
@@ -61,12 +63,97 @@ function iterateMandelbrot(
 		imag.mul(imag, imag2).truncate(limbCount);
 	} while(iter < maxIter && real2.add(imag2, temp1).valueOf() < bailOut2);
 
+	console.log(iter, dReal.toString(), dImag.toString());
+
 	orbitState.real = real;
 	orbitState.imag = imag;
 	orbitState.dReal = dReal;
 	orbitState.dImag = dImag;
 
 	return(iter);
+}
+
+interface Newton {
+	sw: BigComplex,
+	ne: BigComplex,
+	period: number;
+	orbitChunk: OrbitSample<number>[];
+	referencePoint: BigComplex;
+	closestReference: BigComplex;
+	epsilon2: number;
+	gc: CanvasRenderingContext2D,
+	view: MandelbrotView
+}
+
+function newtonStep(state: Newton, options: MandelbrotOptions) {
+	const [ temp1, temp2, temp3 ] = tempFloats;
+	const { sw, ne, period, orbitChunk, referencePoint, closestReference, epsilon2, gc, view } = state;
+	const tempComplex = new BigComplex();
+	const orbitState: OrbitSample<BigFloat> = {
+		real: new BigFloat(),
+		imag: new BigFloat(),
+		dReal: new BigFloat(),
+		dImag: new BigFloat()
+	};
+	let step: number;
+
+	for(let iter = orbitChunk.length; iter < period; ++iter) {
+		orbitChunk[iter] = {
+			real: 0,
+			imag: 0,
+			dReal: 0,
+			dImag: 0
+		};
+	}
+
+	options.iterationsPerFrame = period;
+
+	for(step = 0; step < 64; ++step) {
+		orbitState.real.setValue(referencePoint.real);
+		orbitState.imag.setValue(referencePoint.imag);
+		orbitState.dReal.setValue(1);
+		orbitState.dImag.setValue(0);
+
+		try {
+			iterateMandelbrot(referencePoint, orbitState, orbitChunk, options);
+		} catch(err) { debugger; }
+
+		const { real, imag, dReal, dImag } = orbitState;
+
+		const dMag2 = dReal.mul(dReal, temp1).add(dImag.mul(dImag, temp2), temp3).valueOf(); //  * 2;
+		const deltaReal = real.mul(dReal, temp1).add(imag.mul(dImag, temp2), temp3).valueOf() / dMag2;
+		const deltaImag = imag.mul(dReal, temp1).sub(real.mul(dImag, temp2), temp3).valueOf() / dMag2;
+
+		if(deltaReal * deltaReal + deltaImag * deltaImag < epsilon2) {
+			break;
+		}
+
+		referencePoint.real.sub(deltaReal, tempComplex.real);
+		referencePoint.imag.sub(deltaImag, tempComplex.imag);
+		referencePoint.setValue(tempComplex.truncate(options.limbCount!));
+
+		// if(i % 10 == 0) console.log('ref', referencePoint.real.valueOf(), referencePoint.imag.valueOf());
+
+		gc.strokeStyle = step ? '#ff00ff' : '#ff0000';
+
+		const { x, y } = view.toView(
+			referencePoint.real,
+			referencePoint.imag
+		);
+
+		gc.beginPath();
+		gc.arc(x, y, 10, 0, Math.PI * 2);
+		gc.stroke();
+	}
+
+	const { x, y } = view.toView(
+		referencePoint.real,
+		referencePoint.imag
+	);
+
+	gc.fillText('' + period, x, y);
+
+	return(step < 64);
 }
 
 /** Represents a view of the Mandelbrot fractal with a center point and zoom.
@@ -77,39 +164,30 @@ function iterateMandelbrot(
 export class MandelbrotView implements MandelbrotOptions {
 
 	constructor(
-		center?: BigComplex | [number, number],
+		center: BigComplex | [number, number] = new BigComplex(),
 		public zoomExponent = 0,
 		options: MandelbrotOptions = {}
 	) {
-		if(center) {
-			if(!(center instanceof BigComplex)) center = new BigComplex(center[0], center[1]);
-		} else center = new BigComplex();
+		if(!(center instanceof BigComplex)) {
+			center = new BigComplex(center[0], center[1]);
+		}
 
 		this.center = center;
 		this.iterationsPerFrame = options.iterationsPerFrame || 64;
 		this.bailOut = options.bailOut || 256;
-		this.maxPeriod = options.maxPeriod || 8192;
+		this.maxPeriod = options.maxPeriod;
 
-		this.setPixelSize(options.widthPixels || 1024, options.heightPixels || 1024);
+		this.setPixelSize(
+			options.widthPixels || 1024,
+			options.heightPixels || 1024
+		);
 
-		const sw = this.offsetCenter(-1, -1);
-		const ne = this.offsetCenter(1, 1);
+		this.calculateReferencePoint(
+			this.offsetCenter(-1, -1),
+			this.offsetCenter(1, 1)
+		);
 
-		this.periods = mandelbrotPeriod(sw, ne, this);
-		this.calculateReferencePoint(sw, ne, this.periods);
-// this.referencePoint = this.center.clone();
 		this.restartOrbit();
-
-		// Initialize empty reference orbit chunk.
-
-		for(let iter = 0; iter < this.iterationsPerFrame; ++iter) {
-			this.orbitChunk[iter] = {
-				real: 0,
-				imag: 0,
-				dReal: 0,
-				dImag: 0
-			};
-		}
 	}
 
 	/** Get complex coordinates from local view coordinates.
@@ -121,6 +199,7 @@ export class MandelbrotView implements MandelbrotOptions {
 	  * @param y Local vertical coordinate from -1 (bottom) to 1 (top edge).
 	  * @return Complex coordinates matching given local coordinates. */
 
+	// TODO: Rename to applyOffset
 	offsetCenter(x: number, y: number) {
 		const zoom = this.zoomExponent;
 		const scale = Math.pow(2, zoom);
@@ -129,6 +208,17 @@ export class MandelbrotView implements MandelbrotOptions {
 			this.center.real.add(x * this.scaleReal * scale),
 			this.center.imag.add(y * this.scaleImag * scale)
 		));
+	}
+
+	getOffset(real: BigFloat, imag: BigFloat) {
+		const [ temp1, temp2, temp3 ] = tempFloats;
+		const zoom = this.zoomExponent;
+		const scale = Math.pow(2, zoom);
+
+		return({
+			x: real.sub(this.center.real, temp1).valueOf() / (this.scaleReal * scale),
+			y: imag.sub(this.center.imag, temp1).valueOf() / (this.scaleImag * scale)
+		})
 	}
 
 	toView(real: BigFloat, imag: BigFloat) {
@@ -144,14 +234,21 @@ export class MandelbrotView implements MandelbrotOptions {
 
 	private calculateReferencePoint(
 		sw: BigComplex,
-		ne: BigComplex,
-		periods: number[]
+		ne: BigComplex
 	) {
-		const [ temp1, temp2, temp3 ] = tempFloats;
-		const epsilon2 = this.pixelSize * this.pixelSize / 4;
+		const options: MandelbrotOptions = {
+			bailOut: this.bailOut,
+			maxPeriod: this.maxPeriod,
+			limbCount: this.limbCount
+		};
+		const epsilon2 = this.pixelSize * this.pixelSize;
+		const periodFinder = new PeriodFinder(sw, ne, options);
 		const referencePoint = new BigComplex();
+		const tempComplex = new BigComplex();
+		let closestReference = this.center.clone();
+		let closestDistance = Infinity;
+		let outsideCount = 0;
 		let period: number | undefined;
-		let i: number;
 
 		const canvas = document.getElementById('gc2') as HTMLCanvasElement;
 		const gc = canvas.getContext('2d')!;
@@ -164,86 +261,96 @@ export class MandelbrotView implements MandelbrotOptions {
 		gc.arc(this.widthPixels * 0.5, this.heightPixels * 0.5, 10, 0, Math.PI * 2);
 		gc.stroke();
 
-		const options: MandelbrotOptions = {
-			bailOut: this.bailOut,
-			limbCount: this.limbCount
+		const orbitChunk: OrbitSample<number>[] = [];
+		console.log(this.center.real.valueOf(), this.center.imag.valueOf(), this.zoomExponent);
+
+		const newton: Newton = {
+			sw,
+			ne,
+			period: 0,
+			orbitChunk,
+			referencePoint,
+			closestReference,
+			epsilon2,
+			gc,
+			view: this
 		};
 
-		const orbitChunk: OrbitSample<number>[] = [];
-console.log(this.center.real.valueOf(), this.center.imag.valueOf());
-
-		while((period = periods.shift())) {
-			for(let iter = orbitChunk.length; iter < period; ++iter) {
-				orbitChunk[iter] = {
-					real: 0,
-					imag: 0,
-					dReal: 0,
-					dImag: 0
-				};
-			}
-
+		while((period = periodFinder.next()) && outsideCount < 3) {
 			referencePoint.setValue(this.center);
-			options.iterationsPerFrame = period;
+			newton.period = period;
 
-			for(i = 0; i < 100; ++i) {
-				this.orbitState = {
-					real: referencePoint.real,
-					imag: referencePoint.imag,
-					dReal: new BigFloat(1),
-					dImag: new BigFloat(0)
-				};
+			if(newtonStep(newton, options)) {
+				const { real, imag } = referencePoint;
 
-				try {
-					iterateMandelbrot(referencePoint, this.orbitState, orbitChunk, options);
-				} catch(err) { debugger; }
+				if(
+					real.deltaFrom(sw.real) > 0 &&
+					imag.deltaFrom(sw.imag) > 0 &&
+					real.deltaFrom(ne.real) < 0 &&
+					imag.deltaFrom(ne.imag) < 0
+				) {
+					console.log('FOUND', period, referencePoint.real.valueOf(), referencePoint.imag.valueOf());
 
-				const { real, imag, dReal, dImag } = this.orbitState;
-
-				const dMag2 = dReal.mul(dReal, temp1).add(dImag.mul(dImag, temp2), temp3).valueOf();
-				const deltaReal = real.mul(dReal, temp1).add(imag.mul(dImag, temp2), temp3).valueOf() / dMag2 / 2;
-				const deltaImag = imag.mul(dReal, temp1).sub(real.mul(dImag, temp2), temp3).valueOf() / dMag2 / 2;
-
-				if(deltaReal * deltaReal + deltaImag * deltaImag < epsilon2) {
+					// Report point if it converged inside the view.
+					closestReference.setValue(referencePoint);
 					break;
+				} else {
+					console.log('CONVERGE', period, referencePoint.real.valueOf(), referencePoint.imag.valueOf());
+
+					// Store this point if it's closer to the view center than
+					// the previous one was.
+
+					referencePoint.sub(this.center, tempComplex);
+
+					const deltaReal = tempComplex.real.valueOf();
+					const deltaImag = tempComplex.imag.valueOf();
+					const distance = deltaReal * deltaReal + deltaImag * deltaImag;
+
+					if(distance < closestDistance) {
+						closestReference.setValue(referencePoint);
+						closestDistance = distance;
+					}
+
+					++outsideCount;
 				}
-
-				referencePoint.real.sub(deltaReal, temp1);
-				temp1.add(0, referencePoint.real).truncate(this.limbCount);
-				referencePoint.imag.sub(deltaImag, temp1);
-				temp1.add(0, referencePoint.imag).truncate(this.limbCount);
-
-				if(i % 10 == 0) console.log('ref', referencePoint.real.valueOf(), referencePoint.imag.valueOf());
-
-				gc.strokeStyle = i ? '#ff00ff' : '#ff0000';
-
-				const { x, y } = this.toView(
-					referencePoint.real,
-					referencePoint.imag
-				);
-
-				gc.beginPath();
-				gc.arc(x, y, 10, 0, Math.PI * 2);
-				gc.stroke();
-			}
-
-			const { x, y } = this.toView(
-				referencePoint.real,
-				referencePoint.imag
-			);
-
-			gc.fillText('' + period, x, y);
-
-			const { real, imag } = referencePoint;
-
-			// Report point if it converged inside the view.
-			if(i < 100 && real > sw.real && imag > sw.imag && real < ne.real && imag < ne.imag) {
-				this.referencePoint.setValue(this.center);
-				return;
 			}
 		}
 
-		debugger;
-		this.referencePoint.setValue(this.center);
+		for(let i = 0; i < 4; ++i) console.log(periodFinder.samples[i].real.valueOf(), periodFinder.samples[i].imag.valueOf());
+		console.log(closestReference.real.valueOf(), closestReference.imag.valueOf());
+
+		let limbCount = options.limbCount!;
+		let i: number;
+
+		// Increase precision and refine estimate until reference orbit no longer escapes.
+
+		for(i = 0; i < 10; ++i) {
+			// TODO: This should be based on the size estimate.
+			newton.epsilon2 /= 65536 * 65536;
+			limbCount += 0.5;
+			options.limbCount = ~~(limbCount + 0.5);
+
+			console.log(referencePoint.real.toString(), referencePoint.imag.toString());
+			console.log('NEWTON', newtonStep(newton, options));
+			console.log(referencePoint.real.toString(), referencePoint.imag.toString());
+
+			closestReference.setValue(referencePoint);
+			this.referencePoint.setValue(closestReference);
+
+			options.iterationsPerFrame = this.iterationsPerFrame;
+
+			this.restartOrbit();
+			const debug = this.updateOrbit(options);
+			if(debug >= this.iterationsPerFrame) {
+				console.log('ENOUGH', debug, i, period);
+				break;
+			}
+
+			console.log('NOT ENOUGH', debug, i, period);
+			console.log(JSON.stringify(options, null, '\t'));
+		}
+
+		if(i == 10) debugger;
 	}
 
 	restartOrbit() {
@@ -254,15 +361,28 @@ console.log(this.center.real.valueOf(), this.center.imag.valueOf());
 			dReal: new BigFloat(1),
 			dImag: new BigFloat(0)
 		};
+
+		// Initialize empty reference orbit chunk.
+
+		for(let iter = 0; iter < this.iterationsPerFrame; ++iter) {
+			this.orbitChunk[iter] = {
+				real: 0,
+				imag: 0,
+				dReal: 0,
+				dImag: 0
+			};
+		}
 	}
 
-	updateOrbit() {
+	updateOrbit(options?: MandelbrotOptions) {
 		this.orbitChunkLen = iterateMandelbrot(
 			this.referencePoint,
 			this.orbitState,
 			this.orbitChunk,
-			this
+			options || this
 		);
+
+		return(this.orbitChunkLen);
 	}
 
 	setPixelSize(widthPixels: number, heightPixels: number) {
@@ -304,7 +424,7 @@ console.log(this.center.real.valueOf(), this.center.imag.valueOf());
 
 	iterationsPerFrame: number;
 	bailOut: number;
-	maxPeriod: number;
+	maxPeriod?: number;
 
 	widthPixels: number;
 	heightPixels: number;
@@ -313,8 +433,6 @@ console.log(this.center.real.valueOf(), this.center.imag.valueOf());
 	/** View center location. */
 	center: BigComplex;
 
-	/** Lowest limit cycle period within the view. */
-	periods: number[];
 	/** Perturbation reference orbit parameter. */
 	referencePoint = new BigComplex();
 
