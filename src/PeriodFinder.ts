@@ -30,6 +30,9 @@ import { MandelbrotOptions, detSign } from './util';
 
 /** Temporary storage to avoid allocating memory while iterating. */
 export const tempComplex = new BigComplex();
+export const zeroComplex = new BigComplex();
+
+const epsilon = Math.pow(2, -16);
 
 export class PeriodFinder implements MandelbrotOptions {
 
@@ -42,6 +45,7 @@ export class PeriodFinder implements MandelbrotOptions {
 		options: MandelbrotOptions = {}
 	) {
 		const bailOut = options.bailOut || 2;
+		this.bailOut = bailOut;
 		this.bailOut2 = bailOut * bailOut;
 		this.maxPeriod = options.maxPeriod || 256;
 		this.limbCount = options.limbCount || 2;
@@ -58,7 +62,7 @@ export class PeriodFinder implements MandelbrotOptions {
 			this.samples[num] = this.corners[num].clone();
 		}
 
-		this.period = 1;
+		this.period = 0;
 	}
 
 	/** Calculate next lowest Mandelbrot limit cycle period among points inside a
@@ -72,7 +76,7 @@ export class PeriodFinder implements MandelbrotOptions {
 		const maxPeriod = this.maxPeriod;
 		const limbCount = this.limbCount;
 		const samples = this.samples;
-		const corners = this.corners;
+		const corners = this.corners.slice(0);
 		let period = this.period;
 		let sample: BigComplex;
 		let real: number;
@@ -83,7 +87,7 @@ export class PeriodFinder implements MandelbrotOptions {
 		let imagSign: number;
 		let imagSignPrev: number;
 
-		while(period++ < maxPeriod && sign >= 0) {
+		while(sign >= 0 && period++ < maxPeriod) {
 			// Advance orbits with parameters at all corner points by one step.
 
 			for(let num = 0; num < 4; ++num) {
@@ -94,17 +98,20 @@ export class PeriodFinder implements MandelbrotOptions {
 				abs2 = real * real + imag * imag;
 
 				if(abs2 > bailOut2) {
-					// If point escaped, normalize it back to the unit circle.
-					// Why does this work? It's a mystery!
-					// TODO: See if radius 2 circle works better.
+					console.log('BOOM', period, num, abs2);
+
+					// Simulate points escaping all the way to infinity by
+					// normalizing them to the unit circle and setting c=0.
 
 					abs = Math.sqrt(abs2);
 					sample.real.setValue(real / abs);
 					sample.imag.setValue(imag / abs);
+					corners[num] = zeroComplex;
 				}
 
 				// z = z^2 + c
 				sample.sqr(tempComplex).add(corners[num], sample).truncate(limbCount);
+// console.log('...', period, num, abs2, sample.real.valueOf(), sample.imag.valueOf(), limbCount);
 			}
 
 			// Test if a quadrilateral defined by the sample points contains
@@ -120,18 +127,41 @@ export class PeriodFinder implements MandelbrotOptions {
 				imagSignPrev = imagSign;
 				imagSign = sample.imag.getSign();
 
+				real = sample.real.valueOf();
+				imag = sample.imag.valueOf();
+
+				// Assume point is at origin if very close.
+
+				if(real * real + imag * imag < epsilon) {
+					sign = -1;
+					break;
+				}
+
 				if(imagSign * imagSignPrev < 0) {
 					// Get a corner point and delta to the next corner point,
 					// forming an edge of the bounding quad.
 
-					samples[(num + 1) & 3].sub(sample, tempComplex);
+					sample.sub(samples[(num + 3) & 3], tempComplex);
+
+					const numer = (
+						samples[(num + 3) & 3].real.valueOf() * imag -
+						samples[(num + 3) & 3].imag.valueOf() * real
+					);
+
+					real = tempComplex.real.valueOf();
+					imag = tempComplex.imag.valueOf();
+
+					// Assume line crosses origin if very close.
+
+					if(numer * numer / (real * real + imag * imag) < epsilon) {
+						sign = -1;
+						break;
+					}
 
 					// Flip sign if the edge crosses one half of the real axis
 					// (excluding zero). This may check for the positive or
 					// negative half (depending on latest code changes).
 					// Either one works, as long as all edges use the same check.
-
-					// console.log(sample.real.valueOf(), sample.imag.valueOf(), detSign(sample.real, sample.imag, tempComplex.real, tempComplex.imag), tempComplex.imag.getSign());
 
 					sign *= (
 						detSign(sample.real, sample.imag, tempComplex.real, tempComplex.imag) *
@@ -142,15 +172,17 @@ export class PeriodFinder implements MandelbrotOptions {
 		}
 
 		this.period = period;
+		console.log('Period = ', period);
 
 		// If the final sign is negative, it must have been flipped an odd
 		// number of times, meaning the orbit of some unknown point inside
 		// this view just returned to the origin ending one period.
 		// Otherwise max period was reached and period finding failed.
 
-		return(sign < 0 ? period : 0);
+		return(sign < 0 ? this.period : 0);
 	}
 
+	bailOut: number;
 	/** Orbit escape threshold. Magnitude of escaped points can be ignored. */
 	bailOut2: number;
 	/** Maximum iterations to excessive lag. */

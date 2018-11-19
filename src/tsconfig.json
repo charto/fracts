@@ -3,7 +3,8 @@
 	"compilerOptions": {
 		"allowSyntheticDefaultImports": true,
 		"declaration": true,
-		"lib": [ "dom", "es5" ],
+		"experimentalDecorators": true,
+		"lib": [ "dom", "es5", "es2015.iterable", "es2015.symbol.wellknown" ],
 		"module": "commonjs",
 		"moduleResolution": "node",
 		"noImplicitAny": true,

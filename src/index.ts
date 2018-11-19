@@ -3,6 +3,7 @@
 import { Shader } from 'charto-3d';
 import { OrbitSample } from './util';
 import { MandelbrotView } from './MandelbrotView';
+import { View, State } from './History';
 
 import mandelVertex from '../glsl/mandel.vert';
 import mandelFragment from '../glsl/mandel.frag';
@@ -10,6 +11,8 @@ import { BigFloat32 as BigFloat, BigComplex32 as BigComplex } from 'bigfloat';
 
 const perturbStride = 256;
 const thumbSize = 0;
+
+const history = new State();
 
 const enum Attribute {
 	aPos = 0
@@ -84,12 +87,23 @@ class Render {
 		));
 	}
 
-	draw(view: MandelbrotView) {
+	draw(view: View) {
 		const gl = this.gl;
 
-		let x = view.center.real.valueOf();
-		let y = view.center.imag.valueOf();
+		const center = view.center.value;
+		let x = center.real.valueOf();
+		let y = center.imag.valueOf();
 		let zoom = Math.pow(2, view.zoomExponent);
+
+		console.log(center.real.valueOf(), center.imag.valueOf());
+
+		const mini = new MandelbrotView(center, view.zoomExponent, {
+			widthPixels: this.canvas.offsetWidth,
+			heightPixels: this.canvas.offsetHeight,
+			maxIterations: 64 * 8,
+			bailOut: 256,
+			maxPeriod: 512
+		}, view).mini;
 
 		// const ratio = window.devicePixelRatio;
 		const ratio = 1.0;
@@ -112,7 +126,7 @@ class Render {
 		const xScale = width / size * 2;
 		const yScale = height / size * 2;
 
-		view.updateOrbit();
+		mini.updateOrbit();
 		const data = new Float32Array(perturbStride * perturbStride * 4);
 
 		let ptr = 0;
@@ -120,12 +134,12 @@ class Render {
 		let sample: OrbitSample<number>;
 
 		while(num < perturbStride * perturbStride) {
-			sample = view.orbitChunk[num++] || {};
+			sample = mini.orbitChunk[num++] || {};
 
 			data[ptr++] = sample.real;
 			data[ptr++] = sample.imag;
-			data[ptr++] = sample.dReal;
-			data[ptr++] = sample.dImag;
+			data[ptr++] = sample.dcReal;
+			data[ptr++] = sample.dcImag;
 		}
 
 		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, perturbStride, perturbStride, 0, gl.RGBA, gl.FLOAT, data);
@@ -136,7 +150,10 @@ class Render {
 		f32[0] = y;
 		const yHi = f32[0];
 
-		const offset = view.getOffset(view.referencePoint.real, view.referencePoint.imag);
+		const offset = view.toLocal(mini.referencePoint.real, mini.referencePoint.imag);
+
+		offset.x = offset.x / width * size;
+		offset.y = offset.y / height * size;
 
 		// gl.uniform1i(this.uMaxIter, maxIter);
 		gl.uniform2f(this.uCenterHi, xHi, yHi);
@@ -171,21 +188,14 @@ class Render {
 const canvas = document.getElementById('gc') as HTMLCanvasElement;
 const render = new Render(canvas);
 
-const real = new BigFloat();
-const imag = new BigFloat();
+//const r = new BigFloat();
+//const imag = new BigFloat();
 let zoom = 0;
 
-// const step = Math.pow(2, -1 / 2);
 const step = -1 / 16;
 
-let view = new MandelbrotView(new BigComplex(real, imag), zoom, {
-	iterationsPerFrame: 64 * 8,
-	bailOut: 256,
-	maxPeriod: 512
-});
-
 function redraw() {
-	window.requestAnimationFrame(() => render.draw(view));
+	window.requestAnimationFrame(() => render.draw(history.view));
 }
 
 window.onresize = redraw;
@@ -220,19 +230,18 @@ canvas.onmouseup = (e: MouseEvent) => {
 }
 
 function animate() {
-	if(zooming) window.requestAnimationFrame(animate);
+	if(zooming) {
+		window.requestAnimationFrame(animate);
 
-	const width = canvas.offsetWidth;
-	const height = (canvas.offsetHeight - thumbSize);
-	const size = Math.min(width, height);
+		const width = canvas.offsetWidth;
+		const height = (canvas.offsetHeight - thumbSize);
+		const size = Math.min(width, height);
 
-	// x = x + (mx / width - 0.5) * width / size * 4 * Math.pow(2, zoom) * (1 - Math.pow(2, step));
-	// y = y + (0.5 - my / height) * height / size * 4 * Math.pow(2, zoom) * (1 - Math.pow(2, step));
-	// zoom += step;
-	view.setPixelSize(width, height);
-	view = view.zoomedTo(mx / width * 2 - 1, 1 - my / height * 2, step);
+		history.view.zoomTo((mx * 2 - width) / size, (height - my * 2) / size, step);
+	}
 
-	render.draw(view);
+	console.log(history.view);
+	render.draw(history.view);
 }
 
 animate();
@@ -251,19 +260,3 @@ document.getElementById('fullscreen')!.onclick = (e: MouseEvent) => {
 		).call(element);
 	} catch(err) {}
 };
-
-/*
-canvas.onclick = (e: MouseEvent) => {
-	const width = canvas.offsetWidth;
-	const height = canvas.offsetHeight;
-	const size = Math.min(width, height);
-
-	x = x + (e.offsetX / width - 0.5) * width / size * 4 * zoom * (1 - step);
-	y = y + (0.5 - e.offsetY / height) * height / size * 4 * zoom * (1 - step);
-	zoom *= step;
-
-	redraw();
-};
-
-redraw();
-*/

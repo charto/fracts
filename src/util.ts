@@ -9,7 +9,7 @@ export interface MandelbrotOptions {
 	/** Iterations in a single WebGL shader invocation. Higher numbers increase
 	  * user interface lag from GPU load. Perturbation reference orbit is also
 	  * calculated in chunks, only the iterations needed for the next frame. */
-	iterationsPerFrame?: number;
+	maxIterations?: number;
 
 	/** Magnitude for orbit points considered to have escaped the set.
 	  * Traditionally 2, but 256 produces more accurate derivatives needed for
@@ -35,9 +35,9 @@ export interface OrbitSample<Type> {
 	real: Type;
 	imag: Type;
 	/** Derivative for distance estimation, initially 1. */
-	dReal: Type;
+	dcReal: Type;
 	/** Derivative for distance estimation, initially 0. */
-	dImag: Type;
+	dcImag: Type;
 }
 
 /** Calculate sign of the 2D cross product AKA perp dot product AKA 2x2 matrix
