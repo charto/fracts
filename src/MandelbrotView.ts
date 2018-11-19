@@ -1,10 +1,6 @@
-import {
-	BigFloat32 as BigFloat,
-	BigComplex32 as BigComplex
-} from 'bigfloat';
+import { BigComplex32 as BigComplex } from 'bigfloat';
 
-import { MandelbrotOptions, OrbitSample, tempFloats } from './util';
-import { PeriodFinder } from './PeriodFinder';
+import { MandelbrotOptions } from './util';
 import { MinibrotFinder } from './MinibrotFinder';
 import { View } from './History';
 

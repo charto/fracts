@@ -132,7 +132,7 @@ export class MinibrotFinder implements MandelbrotOptions {
 		const orbitChunk: OrbitSample<number>[] = [];
 		console.log(center.real.valueOf(), center.imag.valueOf(), this.zoomExponent);
 
-		while((this.period = periodFinder.next()) && outsideCount < 30) {
+		while((this.period = periodFinder.next()) && outsideCount < 8) {
 			console.log(this.period);
 			referencePoint.setValue(center);
 

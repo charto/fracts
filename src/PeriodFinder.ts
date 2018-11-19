@@ -32,6 +32,7 @@ import { MandelbrotOptions, detSign } from './util';
 export const tempComplex = new BigComplex();
 export const zeroComplex = new BigComplex();
 
+/** Squared distances below epsilon are considered to be zero. */
 const epsilon = Math.pow(2, -16);
 
 export class PeriodFinder implements MandelbrotOptions {
@@ -65,121 +66,131 @@ export class PeriodFinder implements MandelbrotOptions {
 		this.period = 0;
 	}
 
-	/** Calculate next lowest Mandelbrot limit cycle period among points inside a
-	  * rectangle, using Robert Munafo's method based on the Jordan curve theorem.
-	  *
-	  * This will fail if no periodic points exist (no point in the view belongs
-	  * to the Mandelbrot set, making it pretty boring). */
+	/** Advance orbits with parameters at all corner points by one step. */
 
-	next() {
+	private getNextSamples() {
 		const bailOut2 = this.bailOut2;
-		const maxPeriod = this.maxPeriod;
 		const limbCount = this.limbCount;
 		const samples = this.samples;
-		const corners = this.corners.slice(0);
-		let period = this.period;
+		const corners = this.corners;
 		let sample: BigComplex;
 		let real: number;
 		let imag: number;
-		let abs2: number;
 		let abs: number;
-		let sign = 0;
-		let imagSign: number;
-		let imagSignPrev: number;
+		let abs2: number;
 
-		while(sign >= 0 && period++ < maxPeriod) {
-			// Advance orbits with parameters at all corner points by one step.
+		for(let num = 0; num < 4; ++num) {
+			sample = samples[num];
 
-			for(let num = 0; num < 4; ++num) {
-				sample = samples[num];
+			real = sample.real.valueOf();
+			imag = sample.imag.valueOf();
+			abs2 = real * real + imag * imag;
 
-				real = sample.real.valueOf();
-				imag = sample.imag.valueOf();
-				abs2 = real * real + imag * imag;
+			if(abs2 > bailOut2) {
+				console.log('BOOM', this.period, num, abs2);
 
-				if(abs2 > bailOut2) {
-					console.log('BOOM', period, num, abs2);
+				// Simulate points escaping all the way to infinity by
+				// normalizing them to the unit circle and setting c=0.
 
-					// Simulate points escaping all the way to infinity by
-					// normalizing them to the unit circle and setting c=0.
+				abs = Math.sqrt(abs2);
+				sample.real.setValue(real / abs);
+				sample.imag.setValue(imag / abs);
+				corners[num] = zeroComplex;
+			}
 
-					abs = Math.sqrt(abs2);
-					sample.real.setValue(real / abs);
-					sample.imag.setValue(imag / abs);
-					corners[num] = zeroComplex;
-				}
-
-				// z = z^2 + c
-				sample.sqr(tempComplex).add(corners[num], sample).truncate(limbCount);
+			// z = z^2 + c
+			sample.sqr(tempComplex).add(corners[num], sample).truncate(limbCount);
 // console.log('...', period, num, abs2, sample.real.valueOf(), sample.imag.valueOf(), limbCount);
-			}
-
-			// Test if a quadrilateral defined by the sample points contains
-			// the origin (0, 0) by counting crossings using signs of cross
-			// products. Start with a positive sign, meaning an even number
-			// of crossings.
-
-			sign = 1;
-			imagSign = samples[3].imag.getSign();
-
-			for(let num = 0; num < 4; ++num) {
-				sample = samples[num];
-				imagSignPrev = imagSign;
-				imagSign = sample.imag.getSign();
-
-				real = sample.real.valueOf();
-				imag = sample.imag.valueOf();
-
-				// Assume point is at origin if very close.
-
-				if(real * real + imag * imag < epsilon) {
-					sign = -1;
-					break;
-				}
-
-				if(imagSign * imagSignPrev < 0) {
-					// Get a corner point and delta to the next corner point,
-					// forming an edge of the bounding quad.
-
-					sample.sub(samples[(num + 3) & 3], tempComplex);
-
-					const numer = (
-						samples[(num + 3) & 3].real.valueOf() * imag -
-						samples[(num + 3) & 3].imag.valueOf() * real
-					);
-
-					real = tempComplex.real.valueOf();
-					imag = tempComplex.imag.valueOf();
-
-					// Assume line crosses origin if very close.
-
-					if(numer * numer / (real * real + imag * imag) < epsilon) {
-						sign = -1;
-						break;
-					}
-
-					// Flip sign if the edge crosses one half of the real axis
-					// (excluding zero). This may check for the positive or
-					// negative half (depending on latest code changes).
-					// Either one works, as long as all edges use the same check.
-
-					sign *= (
-						detSign(sample.real, sample.imag, tempComplex.real, tempComplex.imag) *
-						tempComplex.imag.getSign()
-					) || 1;
-				}
-			}
 		}
 
-		this.period = period;
-		console.log('Period = ', period);
+		return(samples);
+	}
+
+	/** Test if a quadrilateral defined by the sample points contains
+	  * the origin (0, 0) by counting crossings using signs of cross
+	  * products. Start with a positive sign, meaning an even number
+	  * of crossings. */
+
+	private nextContainsOrigin() {
+		const samples = this.getNextSamples();
+		let samplePrev: BigComplex;
+		let real: number;
+		let imag: number;
+		let imagSignPrev: number;
+
+		let sign = 1;
+		let sample = samples[3];
+
+		let realPrev = sample.real.valueOf();
+		let imagPrev = sample.imag.valueOf();
+		let imagSign = sample.imag.getSign();
+
+		for(let num = 0; num < 4; ++num) {
+			samplePrev = sample;
+			sample = samples[num];
+
+			real = sample.real.valueOf();
+			imag = sample.imag.valueOf();
+			imagSignPrev = imagSign;
+			imagSign = sample.imag.getSign();
+
+			// Assume point is at origin if very close.
+			if(real * real + imag * imag < epsilon) return(true);
+
+			if(imagSign * imagSignPrev < 0) {
+				// Get a corner point and delta to the next corner point,
+				// forming an edge of the bounding quad.
+
+				sample.sub(samplePrev, tempComplex);
+
+				const numer = realPrev * imag - imagPrev * real;
+
+				realPrev = real;
+				imagPrev = imag;
+				real = tempComplex.real.valueOf();
+				imag = tempComplex.imag.valueOf();
+
+				// Assume line crosses origin if very close.
+				if(numer * numer / (real * real + imag * imag) < epsilon) return(true);
+
+				// Flip sign if the edge crosses one half of the real axis
+				// (excluding zero). This may check for the positive or
+				// negative half (depending on latest code changes).
+				// Either one works, as long as all edges use the same check.
+
+				sign *= (
+					detSign(sample.real, sample.imag, tempComplex.real, tempComplex.imag) *
+					tempComplex.imag.getSign()
+				) || 1;
+			} else {
+				realPrev = real;
+				imagPrev = imag;
+			}
+		}
 
 		// If the final sign is negative, it must have been flipped an odd
 		// number of times, meaning the orbit of some unknown point inside
 		// this view just returned to the origin ending one period.
-		// Otherwise max period was reached and period finding failed.
 
-		return(sign < 0 ? this.period : 0);
+		return(sign < 0);
+	}
+
+	/** Calculate next lowest Mandelbrot limit cycle period among points inside a
+	  * rectangle, using Robert Munafo's method based on the Jordan curve theorem.
+	  *
+	  * This will fail if no periodic points exist (no point in the view belongs
+	  * to the Mandelbrot set, making it pretty boring).
+	  *
+	  * @return Limit cycle period or 0 if none was found. */
+
+	next() {
+		const maxPeriod = this.maxPeriod;
+
+		while(this.period++ < maxPeriod && !this.nextContainsOrigin());
+
+		console.log('Period = ', this.period);
+
+		return(this.period % (maxPeriod + 1));
 	}
 
 	bailOut: number;
