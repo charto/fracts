@@ -143,9 +143,6 @@ export class State {
 	constructor() {
 		const { real, imag, zoom } = parseQuery(location.search);
 
-		console.log(real, imag, zoom);
-		console.log(new BigComplex(0, 0, 16).real.valueOf());
-
 		this.view = View.create({
 			center: {
 				real: real || 0,
