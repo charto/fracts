@@ -5,8 +5,10 @@ import { OrbitSample } from './util';
 import { MandelbrotView } from './MandelbrotView';
 import { View } from './History';
 
-import mandelVertex from '../glsl/mandel.vert';
-import mandelFragment from '../glsl/mandel.frag';
+import calcVertex from '../glsl/calculate.vert';
+import calcFragment from '../glsl/calculate.frag';
+import colorVertex from '../glsl/colorize.vert';
+import colorFragment from '../glsl/colorize.frag';
 
 const perturbStride = 256;
 const thumbSize = 0;
@@ -36,8 +38,8 @@ export class Render {
 
 		gl.clearColor(1, 0, 1, 0.25);
 
+		this.initFramebuffer();
 		this.initShader();
-		// this.initFramebuffer();
 		this.initGeometry();
 		this.initInputTexture();
 	}
@@ -45,17 +47,33 @@ export class Render {
 	private initShader() {
 		const gl = this.gl;
 
-		this.shader = new Shader(gl, {
-			vertex: mandelVertex,
-			fragment: mandelFragment,
+		this.calcShader = new Shader(gl, {
+			vertex: calcVertex,
+			fragment: calcFragment,
 			attributes: {
 				[ Attribute.aPos ]: 'aPos'
 			}
 		});
 
-		[ this.uCenterHi, this.uCenterLo, this.uScale, this.uSize, this.uZoom, this.uReferenceOffset ] = this.getUniformLocations([
-			'uCenterHi', 'uCenterLo', 'uScale', 'uSize', 'uZoom', 'uReferenceOffset'
-		]);
+		[ this.uCenterHi, this.uCenterLo, this.uScale, this.uSize, this.uZoomCalc, this.uIter, this.uReferenceOffset, this.uExact ] = this.getUniformLocations(
+			this.calcShader, [
+				'uCenterHi', 'uCenterLo', 'uScale', 'uSize', 'uZoom', 'uIter', 'uReferenceOffset', 'uExact'
+			]
+		);
+
+		this.colorShader = new Shader(gl, {
+			vertex: colorVertex,
+			fragment: colorFragment,
+			attributes: {
+				[ Attribute.aPos ]: 'aPos'
+			}
+		});
+
+		[ this.uZoomColor, this.uOrbitColor, this.uDataColor ] = this.getUniformLocations(
+			this.colorShader, [
+				'uZoom', 'uOrbit', 'uData'
+			]
+		);
 	}
 
 	/** 2 buffers gives 8 channels. We need 7:
@@ -68,30 +86,44 @@ export class Render {
 
 	private initFramebuffer() {
 		const gl = this.gl;
-
 		const ext = gl.getExtension('WEBGL_draw_buffers') || die('Rendering to multiple textures is unsupported on this machine');
+		const attachments = [
+			ext.COLOR_ATTACHMENT0_WEBGL,
+			ext.COLOR_ATTACHMENT1_WEBGL,
+			ext.COLOR_ATTACHMENT2_WEBGL,
+			ext.COLOR_ATTACHMENT3_WEBGL
+		];
 
-		const fb = gl.createFramebuffer()!;
-		const zTex = gl.createTexture()!;
-		const iTex = gl.createTexture()!;
+		this.frameBuffer = gl.createFramebuffer() || die('Error creating WebGL framebuffer');
+		gl.bindFramebuffer(gl.FRAMEBUFFER, this.frameBuffer);
 
-		if(!fb || !zTex || !iTex) {
-			die('Error creating WebGL framebuffer and attached textures');
+		for(let num = 0; num < 4; ++num) {
+			const tex = gl.createTexture() || die('Error creating WebGL texture');
+
+			gl.bindTexture(gl.TEXTURE_2D, tex);
+
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+			gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 640, 480, 0, gl.RGBA, gl.FLOAT, null);
+			gl.framebufferTexture2D(
+				gl.FRAMEBUFFER,
+				attachments[num],
+				gl.TEXTURE_2D,
+				tex,
+				0
+			);
+
+			this.textures[num] = tex;
 		}
-
-		gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-
-		gl.bindTexture(gl.TEXTURE_2D, zTex);
-		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 640, 480, 0, gl.RGBA, gl.FLOAT, null);
-		gl.framebufferTexture2D(gl.FRAMEBUFFER, ext.COLOR_ATTACHMENT0_WEBGL, gl.TEXTURE_2D, zTex, 0);
-
-		gl.bindTexture(gl.TEXTURE_2D, iTex);
-		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 640, 480, 0, gl.RGBA, gl.FLOAT, null);
-		gl.framebufferTexture2D(gl.FRAMEBUFFER, ext.COLOR_ATTACHMENT1_WEBGL, gl.TEXTURE_2D, iTex, 0);
 
 		if(gl.checkFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE) {
 			die('Error configuring WebGL framebuffer');
 		}
+
+		ext.drawBuffersWEBGL(attachments);
 	}
 
 	private initGeometry() {
@@ -113,17 +145,19 @@ export class Render {
 	private initInputTexture() {
 		const gl = this.gl;
 
-		gl.bindTexture(gl.TEXTURE_2D, gl.createTexture() || die('Error creating input texture'));
+		this.refTexture = gl.createTexture() || die('Error creating input texture');
+		gl.bindTexture(gl.TEXTURE_2D, this.refTexture);
+
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 	}
 
-	getUniformLocations(nameList: string[]) {
+	getUniformLocations(shader: Shader, nameList: string[]) {
 		return(nameList.map(
 			(name: string) => {
-				const num = this.gl.getUniformLocation(this.shader.program, name);
+				const num = this.gl.getUniformLocation(shader.program, name);
 				if(!num && num !== 0) throw(new Error('Missing WebGL uniform ' + name));
 				return(num as WebGLUniformLocation);
 			}
@@ -134,6 +168,10 @@ export class Render {
 
 	draw(view: View) {
 		const gl = this.gl;
+
+		this.calcShader.activate([]);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, this.frameBuffer);
+		// gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
 		const center = view.center.value;
 		let x = center.real.valueOf();
@@ -163,6 +201,11 @@ export class Render {
 (document.getElementById('gc2') as HTMLCanvasElement).height = height;
 
 			gl.viewport(0, 0, width, height);
+
+			for(let num = 0; num < 4; ++num) {
+				gl.bindTexture(gl.TEXTURE_2D, this.textures[num]);
+				gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.FLOAT, null);
+			}
 		}
 
 		const size = Math.min(width, height);
@@ -185,7 +228,18 @@ export class Render {
 			data[ptr++] = sample.dcImag;
 		}
 
+		gl.activeTexture(gl.TEXTURE0);
+		gl.bindTexture(gl.TEXTURE_2D, this.refTexture);
 		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, perturbStride, perturbStride, 0, gl.RGBA, gl.FLOAT, data);
+		gl.uniform1i(this.uExact, 0);
+
+		gl.activeTexture(gl.TEXTURE1);
+		gl.bindTexture(gl.TEXTURE_2D, this.textures[0]);
+		gl.uniform1i(this.uOrbitCalc, 1);
+
+		gl.activeTexture(gl.TEXTURE2);
+		gl.bindTexture(gl.TEXTURE_2D, this.textures[1]);
+		gl.uniform1i(this.uDataCalc, 2);
 
 		xy32[0] = x;
 		xy32[1] = y;
@@ -197,24 +251,52 @@ export class Render {
 		gl.uniform2f(this.uCenterLo, x - xy32[0], y - xy32[1]);
 		gl.uniform2f(this.uScale, xScale, yScale);
 		gl.uniform1f(this.uSize, size / zoom);
-		gl.uniform1f(this.uZoom, zoom);
+		gl.uniform1f(this.uZoomCalc, zoom);
+		gl.uniform1i(this.uIter, 0);
 		gl.uniform2f(this.uReferenceOffset, -offset.x / width * size, -offset.y / height * size);
 
 		// gl.uniform1i(this.uDebug, view.period);
 
-		gl.clear(gl.COLOR_BUFFER_BIT);
+		// gl.clear(gl.COLOR_BUFFER_BIT);
+		gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+		this.colorShader.activate([]);
+		gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+		gl.uniform1f(this.uZoomColor, zoom);
+
+		gl.activeTexture(gl.TEXTURE1);
+		gl.bindTexture(gl.TEXTURE_2D, this.textures[0]);
+		gl.uniform1i(this.uOrbitColor, 1);
+
+		gl.activeTexture(gl.TEXTURE2);
+		gl.bindTexture(gl.TEXTURE_2D, this.textures[1]);
+		gl.uniform1i(this.uDataColor, 2);
+
 		gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 	}
 
 	gl: WebGLRenderingContext;
-	shader: Shader;
+	frameBuffer: WebGLFramebuffer;
+	calcShader: Shader;
+	colorShader: Shader;
+
+	refTexture: WebGLTexture;
+	textures: WebGLTexture[] = [];
 
 	uCenterHi: WebGLUniformLocation;
 	uCenterLo: WebGLUniformLocation;
 	uScale: WebGLUniformLocation;
 	uSize: WebGLUniformLocation;
-	uZoom: WebGLUniformLocation;
+	uZoomCalc: WebGLUniformLocation;
+	uZoomColor: WebGLUniformLocation;
 	uReferenceOffset: WebGLUniformLocation;
+	uIter: WebGLUniformLocation;
+	uExact: WebGLUniformLocation;
+	uOrbitCalc: WebGLUniformLocation;
+	uOrbitColor: WebGLUniformLocation;
+	uDataCalc: WebGLUniformLocation;
+	uDataColor: WebGLUniformLocation;
 
 	width: number;
 	height: number;

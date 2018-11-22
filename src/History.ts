@@ -93,6 +93,13 @@ class ViewCode extends shim(ViewData) {
 // http://127.0.0.1:8080/?imag=1.19ade21608936cde4c5bc8e8&real=-0.3298ac8104620b340e59e398&zoom=-32.0625
 // http://127.0.0.1:8080/?imag=0.5c90a9faddf9d13e674&real=-1.074ac777812c045ed28&zoom=-16.25
 // Period should be 55...
+// http://127.0.0.1:8080/?imag=0.aa15c69c4b94b4a105d4a1e&real=-0.98686aecb15400a21309d514&zoom=-32.1875
+
+// Glitch:
+// http://127.0.0.1:8080/?imag=0.5c9111073a8625e61a4&real=-1.074bad46813894354dc&zoom=-18.6875
+
+// Too deep:
+// http://127.0.0.1:8080/?imag=1.1d79faba6933e3bad4dc1434a468635139a9229209c2a5&real=-0.3a6865ffa5812038c9412335a3e7b111712682e784fd64&zoom=-121.25
 
 export const View = mst(ViewCode, ViewData, 'View');
 
