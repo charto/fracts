@@ -3,6 +3,7 @@ precision highp float;
 uniform float uZoom;
 uniform sampler2D uOrbit;
 uniform sampler2D uData;
+uniform float uTransparent;
 
 varying vec2 vPos;
 
@@ -10,7 +11,6 @@ const float INVPI = 0.318309886183790671537767526745;
 
 const float gridWidth = 0.125;
 const float gridAlpha = 1.0 / 16.0;
-const float maxIter = 64.0;
 
 const float bailOut = 256.0;
 const float bailOut2 = bailOut * bailOut;
@@ -75,7 +75,7 @@ void main() {
 		0.5,
 		mix( // Lightness is...
 			// outside the set, cube root of distance estimate multiplied by...
-			min(pow(dist / uZoom, 1.0 / 3.0) * 4.0, 1.0) * (
+			min(pow(dist / uZoom, 1.0 / 3.0) * 4.0 + 0.25, 1.0) * (
 				// Base lightness offset by...
 				0.5 +
 				// Binary decomposition grid lines and odd cell interiors.
@@ -85,5 +85,5 @@ void main() {
 			0.75,
 			inside
 		)
-	), 1.0);
+	), 1.0) * mix(1.0, 0.0, inside * uTransparent);
 }

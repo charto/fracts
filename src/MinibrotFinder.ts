@@ -42,7 +42,7 @@ export function iterateMandelbrot(
 	const bailOut2 = bailOut * bailOut;
 	let iter = 0;
 
-	do {
+	while(iter < maxIter && real2.add(imag2, temp1).valueOf() < bailOut2) {
 		if(orbitChunk) {
 			const sample = orbitChunk[iter];
 
@@ -73,7 +73,8 @@ export function iterateMandelbrot(
 
 		real.mul(real, real2).truncate(limbCount);
 		imag.mul(imag, imag2).truncate(limbCount);
-	} while(++iter < maxIter && real2.add(imag2, temp1).valueOf() < bailOut2);
+		++iter;
+	}
 
 	orbitState.real = real;
 	orbitState.imag = imag;
@@ -94,7 +95,7 @@ export class MinibrotFinder implements MandelbrotOptions {
 	) {
 		this.maxIterations = options.maxIterations || 64;
 		this.bailOut = options.bailOut || 256;
-		this.maxPeriod = options.maxPeriod;
+		this.maxPeriod = options.maxPeriod || 512;
 
 		const size = Math.min(
 			options.widthPixels || 1024,
@@ -132,7 +133,8 @@ export class MinibrotFinder implements MandelbrotOptions {
 		const orbitChunk: OrbitSample<number>[] = [];
 		console.log(center.real.valueOf(), center.imag.valueOf(), this.zoomExponent);
 
-		while((this.period = periodFinder.next()) && outsideCount < 8) {
+		// TODO: outsideCount limit is a random magic constant...
+		while((this.period = periodFinder.next()) && outsideCount < 32) {
 			console.log(this.period);
 			referencePoint.setValue(center);
 
@@ -185,6 +187,8 @@ export class MinibrotFinder implements MandelbrotOptions {
 
 		// Increase precision and refine estimate until reference orbit no longer escapes.
 
+		// TODO: loop max count is a random magic constant...
+		// TODO: need size estimate to verify point is inside the minibrot!
 		for(i = 0; i < 100; ++i) {
 			this.epsilon2 /= 65536 * 65536;
 			limbCount += 0.5;
@@ -199,9 +203,12 @@ export class MinibrotFinder implements MandelbrotOptions {
 
 			// options.maxIterations = this.maxIterations;
 
+			// TODO: replace arbitrary multiplication and this entire test by using size estimate.
+			this.maxIterations *= 32;
 			this.restartOrbit();
 			const debug = this.updateOrbit();
-			if(debug >= this.maxIterations) {
+			this.maxIterations /= 32;
+			if(debug >= this.maxIterations * 32) {
 				console.log('ENOUGH', debug, i, this.period);
 				break;
 			}

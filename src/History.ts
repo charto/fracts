@@ -1,4 +1,4 @@
-import { types, getSnapshot, ModelSnapshotType } from 'mobx-state-tree';
+import { types, getSnapshot, clone, ModelSnapshotType } from 'mobx-state-tree';
 import { mst, shim, action } from 'classy-mst';
 import { BigFloat32 as BigFloat, BigComplex32 as BigComplex } from 'bigfloat';
 import { autorun } from 'mobx';
@@ -71,6 +71,12 @@ class ViewCode extends shim(ViewData) {
 		})
 	}
 
+	@action
+	reset(x: string | number | BigFloat, y: string | number | BigFloat, z: number) {
+		this.center.setValue(new BigComplex(x, y));
+		this.zoomExponent = z;
+	}
+
 	/** Zoom view towards (x, y) in local coordinates.
 	  *
 	  * Complex coordinates at local (x, y) coordinates remain constant.
@@ -85,6 +91,10 @@ class ViewCode extends shim(ViewData) {
 
 		this.center.setValue(this.toGlobal(x * scale, y * scale));
 		this.zoomExponent += amount;
+	}
+
+	clone() {
+		return(clone(this));
 	}
 
 }
