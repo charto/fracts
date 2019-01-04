@@ -305,6 +305,7 @@ export class Render {
 		if(width != this.width || height != this.height) this.resize(width, height);
 
 		const sizeMin = Math.min(width, height);
+		const sizeMax = Math.max(width, height);
 		const xScale = width / sizeMin * 2;
 		const yScale = height / sizeMin * 2;
 
@@ -366,7 +367,7 @@ export class Render {
 			this.updateUnescapedCount(keyFrame);
 		}
 
-		if(keyFrame.renderPassCount % readInterval == 0) {
+		if(keyFrame.renderPassCount % readInterval == 0 && keyFrame.renderPassCount / countInterval >= Math.log(sizeMax) / Math.log(countBlockSize) + 1) {
 			const escapedCount = this.readUnescapedCount();
 			const escapedDelta = escapedCount - keyFrame.escapedCount;
 			keyFrame.escapedCount = escapedCount;
